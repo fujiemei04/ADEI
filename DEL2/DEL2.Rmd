@@ -1,0 +1,446 @@
+---
+title: "PCA, CA and Clustering"
+author: "Fujie Mei Sergio Delgado Mario Wang"
+date: \today
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+  word_document:
+    toc: no
+    toc_depth: '4'
+  html_document:
+    toc: no
+    toc_depth: '4'
+header-includes:
+    - \usepackage{float}
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r,include=FALSE}
+# Load Required Packages: to be increased over the course
+options(contrasts=c("contr.treatment","contr.treatment"))
+
+requiredPackages <- c("effects","FactoMineR","missMDA","mvoutlier","chemometrics", "factoextra","RColorBrewer","ggplot2","dplyr","ggmap","ggthemes","knitr")
+
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed and loaded
+package.check <- lapply(requiredPackages, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+#verify they are loaded
+search()
+
+```
+
+# Loading data and deleting columns
+ 
+We will delete the columns we said that won't contained too many errors to be analyzeable.
+```{r}
+df<-read.csv2("clean_data.csv")
+df$X<-NULL
+df$pdays<-NULL
+df$previous<-NULL
+df$errVar<-NULL
+names(df)
+vars_con = c("age","campaign","emp.var.rate","cons.price.idx","cons.conf.idx","euribor3m","nr.employed")
+vars_dis = c("job","marital","education","housing","loan","contact","month","day_of_week")
+vars_res= c("y","duration")
+```
+
+# Principal Component Analysis (PCA)
+
+We are going to do a PCA analysis in our numerical variables from our dataset, from the PCA graph we can see that the target variable, duration, has little effect and the rest of the variable are very contributive to their respective axes. As we can see, they are very near to the axes and their length are very long.
+
+## Eigenvalues and dominant axes analysis. How many axes we have to interpret according to Kayser and Elbow's rule?
+From the Kayser's rule, all eigenvalues >1, we should consider 2 dimensions, on the other hand, with the Elbow's rule 4 dimensions is the most suitable. In our case we will take Kayser's rule into consideration because it's least number of components and the cummulative variation is almost 80%.
+```{r}
+res.pca <- PCA(df[,c("duration",vars_con)],quanti.sup=c(1))
+```
+```{r}
+summary(res.pca)
+```
+```{r}
+fviz_screeplot(
+  res.pca, 
+  addlabels=TRUE, 
+  ylim=c(0,50), 
+  barfill="darkslateblue", 
+  barcolor="darkslateblue",
+  linecolor = "skyblue1"
+)
+```
+## Individuals point of view: Are they any individuals "too contributive"?
+From what we can see in the graph of individuals, none is "too contributive", as we can see contributions values that ranges from 0 to 0.20 more or less. So we can say in this part that almost all individuals contribute the same.
+```{r}
+# head(res.pca$ind$contrib) # contribition of individuals to the princial components
+fviz_pca_ind(res.pca, col.ind="contrib", geom = "point") +
+scale_color_gradient2(low="darkslateblue", mid="white",
+                      high="red", midpoint=0.40)
+```
+## Interpreting the axes
+
+### Dim1 
+We see that in the first dimension, the variables: euribor, emp.var.rate,nr.employed,cons.price.idx and cons.conf.idx are very contributive to the dimension and we can see that all relates to the economy, so we should name the ax as economic status. We can see that all of them  are positively correlated such that as all of their values grow, the other variables will follow.
+```{r}
+res.des<-dimdesc(res.pca)
+fviz_contrib(  # contributions of variables to PC1
+  res.pca, 
+  fill = "darkslateblue",
+  color = "darkslateblue",
+  choice = "var", 
+  axes = 1, 
+  top = 5)
+res.des$Dim.1
+```
+### Dim2
+In this dimension we see that the only variables that contribute significantly are campaign and age, since we think that campaign is the most relevant feature, we should name this as campaign calls, and it tells us that the older the person the more calls the person will receive.
+```{r}
+res.des<-dimdesc(res.pca)
+fviz_contrib(  # contributions of variables to PC1
+  res.pca, 
+  fill = "darkslateblue",
+  color = "darkslateblue",
+  choice = "var", 
+  axes = 2, 
+  top = 5)
+res.des$Dim.2
+```
+
+
+## Perform a PCA taking into account also supplementary variables the supplementary variables can be quantitative and/or categorical
+
+We will perform the PCA taking into account all the supplementary variables.  The first we've gotten doesn't really make any sense, if we take a look at the PCA graph, we see that age is strongly correlated to euribor but we know for a fact that the euribor rates are totally independent from individuals, we can also see that  the nr.employed are completely negatevely correlated to all the other economic variables, which doesn't make a lot of sense either, for example, it is counterintuitive to think that the higher the number of employed people, the lower the employment variation rate.
+```{r,fig.align='center'}
+ll <- which( df$mout == "YesMOut")
+res.pca_sup<-PCA(df[,c(vars_res, vars_con,vars_dis)],quali.sup=c(1,10:17),quanti.sup= c(2), ind.sup = ll) 
+plot(res.pca_sup, choix="ind",invisible=c("ind","ind.sup"), cex=0.7, graph.type = "classic")
+```
+
+
+# KMEANS
+
+From this graph, we apply Elbow's method which reveals that the optimal number of clusters is 4. So we will proceed to model and interpret the kMEANs with 4 clusters.
+```{r}
+dclu<- res.pca$ind$coord[,1:2]; # los dos ejes
+k.max <- 10
+wss <- sapply(1:k.max, 
+              function(k){kmeans(dclu, k, nstart=50,iter.max = 15 )$tot.withinss})
+wss
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares")
+```
+```{r}
+  # coordenates are real - Euclidean metric
+dist<-dist(dclu)
+kc<-kmeans(dist, 4) #caclulate the distances, it turns into a matrix
+```
+
+
+We can see in this graph the distribution of individuals within each cluster.
+```{r}
+df$claKM<-0
+df$claKM<-kc$cluster
+df$claKM<-factor(df$claKM)
+barplot(table(df$claKM),col="darkslateblue",border="darkslateblue",main="[k-means]#observations/cluster")
+```
+
+
+## Interpret the results of the classification
+
+### The description of the clusters by the variables 
+
+* Cluster 1:
+  + These are the people who will say yes to the campaign and being contacted by cellular, these people are young around the ages of 20-30 and are still students.
+* Cluster 2:
+  + The are people whho are more likely to say yes when they are being contacted on november by cellular.
+* Cluster 3:
+  + These are people who are being contacted by telephone and their response will be a no for the campaign, these people are more towards adults profiles from ages 30-50 and don't have higher degrees.
+* Cluster 4:
+  + These are people who are frequently contacted by campaign and are around the ages of 40-60 who will say no to a campaign.
+  
+We can see that there are two groups within the clusters, the cluster of people who will say yes and a cluster of people who will say no, in clusters 1-2 and 3-4 respectevely. So the campaign will be more succesful if it focuses on poeple of cluster's 1-2.
+```{r,include=FALSE}
+res.cat <-catdes(df,21)
+res.cat$category
+```
+
+# Hierarchical clustering
+We've decided that numbers of cluster is the one that the algorithm gives us, with nb.clust=-1.
+## Description of Clusters
+
+* Cluster 1:
+  + These are the people who will say yes to the campaign and being contacted by cellulars, and mostly single university graduates. Also, they are being called during the months of april and may, which are nearing summer seasons and these kind of people tend to have money saved.
+* Cluster 2:
+  + The are people who are more likely to say no when they are being contacted on november by cellular, cluster similar to the one in KMEANS. These people are divorced and don't have any housing loan.
+* Cluster 3:
+  + These are people who are married and retired which will most likely say no, and are most usually contacted by telephone. We see that these are people who have their life together already and aren't interested in these kind of campaigns anymore.
+
+Following these trends, the company should focus specilly on people with chharacteristics similir to that of cluster 1.
+We can see something in common with these two methods which is that younger educated people are more likely to say yes.
+```{r}
+res.pca<-PCA(df[,c('duration',vars_con,vars_dis,"y")],quanti.sup=1,quali.sup = c(9:17), ncp=2, graph=FALSE)
+res.hcpc<-HCPC(res.pca,order=TRUE, nb.clust = -1)
+attributes(res.hcpc)
+summary(res.hcpc$data.clust)
+attributes(res.hcpc$desc.var)
+# Factors globally related to clustering partition
+res.hcpc$desc.var$test.chi2
+# Categories over/under represented in each cluster
+res.hcpc$desc.var$category
+
+### desc.ind ###
+### C. The description of the clusters by the individuals ###
+```
+
+```{r}
+res.hcpc$desc.var$category
+```
+
+
+# CA
+
+We will cut the duration, which is the numerical target into 8 levels. We will study the CA obtained from the Duration-Age_group and then Duration-education. We want to see this because in the clustering findings we discovered that young educated people are more likely to say yes, so we want to see if it affects the duration as well. 
+
+## Eigenvalues and dominant axes(1)
+
+We can see that independence test fails to refute H0 since the p-value= 0.3263>0.05, so there is no independence between duration and age.
+We can see that the farthest value is 10-20 from age which makes sense since teens aren't likely to be contacted.Since all the other values are around the center we can see that the duration is dependent on the age group(mostly).
+```{r}
+aux2<-c(5,60,120,150,180,240,300,1200,2100) 
+duration_fact<-factor(cut(df$duration,breaks=aux2,include.lowest=T))
+table(duration_fact)
+levels(duration_fact)<-paste0("duration-",levels(duration_fact)) 
+df$duration_fact<-duration_fact
+
+tt<-table(df[,c("Age_group","duration_fact")])
+chisq.test(tt,  simulate.p.value = TRUE) #to see if the rows and columns are independents. H0: Rows and columns are independent
+```
+ 
+```{r}
+res.ca <- CA(tt)
+```
+The mean of eigenvalues = 0.001606341 making that only the first 2 dimensions satisfies Kaiser's criteria. So the dominant axes are 1 and 2 with a cummulative variance of 91.3%.
+
+```{r}
+mean(res.ca$eig[,1])
+summary(res.ca)
+```
+
+
+## Eigenvalues and dominant axes(2)
+We can see that independence test fails to refute H0 since the p-value=0.09445>0.05, so there is no independence between duration and education.
+From the factor map we can see that the farthest value is illiterate and the other values are really near from each other indicating that there is some dependence between them.
+```{r}
+tt<-table(df[,c("education","duration_fact")])
+chisq.test(tt,  simulate.p.value = TRUE) #to see if the rows and colum
+```
+```{r}
+res.ca <- CA(tt)
+```
+The mean of eigenvalues = 0.001980396 making that only the first 3 dimensions satisfies Kaiser's criteria. So the dominant axes are 1 and 2 with a cummulative variance of 97.7%.
+```{r}
+mean(res.ca$eig[,1])
+summary(res.ca)
+```
+
+## Conclusions
+
+All in all, we can see that the findings of CA relative to duration-age and duration-education are very linked to the findings of the clustering, so we can really say with a certain confidence that the age and education of an individual is really impactful on the target variables.
+
+# MCA
+
+## Eigenvalues and dominant axes analysis
+```{r,fig.align='center',include=FALSE}
+res.mca <- MCA(df[,c("y",vars_dis)], 
+  quali.sup=c(1))
+```
+We consider, according to the generalized Kaiser theorem, all those dimensions such that their eigenvalue is greater than the mean. We see that the average gives us 0.125. Therefore, we will take up to dimension 15, which represents the 60% of the sample.
+```{r}
+mean(res.mca$eig[,1])
+res.mca$eig
+```
+
+We can also visualize the percentages of inertia explained by each MCA dimensions:
+```{r}
+fviz_screeplot(
+  res.mca, 
+  addlabels=TRUE, 
+  ylim=c(0,20), 
+  barfill="darkslateblue", 
+  barcolor="darkslateblue",
+  linecolor="skyblue1"
+)
+```
+
+## Individuals point of view
+
+We can see in the legend that thhe contributions goes from 0.025 to 0.1 so we can't say that there are individuals who are too contributive.
+```{r}
+fviz_mca_ind(
+  res.mca, 
+  geom=c("point"),
+  col.ind="contrib", 
+  gradient.cols=c("darkslateblue", "red")
+)
+```
+We've tried many variables but as we can see with these two they are mostly homogenous across the factorial map, that is, evenly distributed.
+```{r}
+fviz_mca_ind(res.mca, label="none", habillage="loan", palette=c("darkslateblue", "red"))
+fviz_mca_ind(res.mca, label="none", habillage="housing", palette=c("darkslateblue", "red"))
+```
+
+## Interpreting map of categories: average profile versus extreme profiles (rare categories)
+
+We can see that the month-december,education-illiterate are extreme profiles from the DIM1 and professional course and technician are etreme profiles from DIM2. All the remaining categories are all gravitating towards the center, we can clearly see the separation of categories respect to the variable "y", the ones near "yes" will make it more likely that the individual with those characteristic will says yes, and the same logics is applied for no.
+```{r}
+fviz_mca_var(res.mca, repel=TRUE)
+```
+
+## Interpreting the axes association to factor map
+
+```{r}
+res.desc <- dimdesc(res.mca, axes = c(1,2))
+```
+### Description of dimension 1
+
+The first dimension of the MCA plot is primarily driven by the contact type, education, and whether or not the client subscribed to a term deposit. Clients who were contacted via cellular communication, had a university degree, and subscribed to a term deposit are more likely to be positively associated with this dimension, while those who were contacted via telephone, had a lower level of education, and did not subscribe to a term deposit are more likely to be negatively associated with this dimension.
+```{r}
+res.desc[[1]]
+```
+### Description of dimension 2
+The dimension 2 appears to be strongly influenced by the type of job and level of education of the respondents, with some additional contribution from the month of last contact and marital status variables.
+```{r}
+res.desc[[2]]
+```
+
+## Perform a MCA taking into account also supplementary variables
+```{r,fig.align='center',include=FALSE}
+res.mca_sup <- MCA(df[,c(vars_res,vars_dis,vars_con)], 
+  quali.sup=c(1),quanti.sup = c(2,11:17))
+```
+
+### Description of dimensions
+```{r}
+res.desc <- dimdesc(res.mca_sup, axes = c(1,2))
+```
+
+#### Description of dimension 1
+The first dimension is positively correlated with the duration of the last contact, which means that clients who had longer contacts are more likely to be positioned towards the positive end of the first dimension.
+The first dimension is negatively correlated with the age and the economic indicators, such as the number of employees, employment variation rate, consumer price index, consumer confidence index, and the euribor 3 month rate. This means that older clients and clients with higher economic indicators are more likely to be positioned towards the negative end of the first dimension.
+The first dimension is negatively correlated with the binary variable that indicates whether the client subscribed to a term deposit or not. This means that clients who did not subscribe to a term deposit are more likely to be positioned towards the negative end of the first dimension.
+```{r}
+res.desc[[1]]
+```
+
+#### Description of dimension 2
+
+Age is weakly positively correlated with the second dimension of the MCA, meaning that it has some association with the categorical variables being analyzed.
+Duration has a weak positive correlation with the second dimension of the MCA, indicating that it also has some relationship with the categorical variables being analyzed.
+The number of employees and consumer confidence index have a weak positive and negative correlation, respectively, with the second dimension of the MCA, suggesting that they have some association with the categorical variables being analyzed.
+Education and job have the strongest association, with an R-squared value of around 0.67-0.69, followed by month, marital, contact, and housing. The variable "y" (indicating whether or not the client subscribed to a term deposit) has a relatively weak association with the categorical variables, with an R-squared value of 0.014.
+Among the categories of the categorical variables, several have a relatively strong association with the dimension, either positively or negatively. For example, professional course education, technician job, and August month are positively associated with the dimension, while illiterate education, entrepreneur job, and October month are negatively associated with the dimension.
+```{r}
+res.desc[[2]]
+```
+
+
+# Hierarchical Clustering (from MCA)
+We've decided that numbers of cluster is the one that the algorithm gives us, with nb.clust=-1.
+```{r}
+res.hcpcMCA <- HCPC(res.mca,nb.clust = -1, order = TRUE)
+```
+
+
+## Description of clusters
+
+* Cluster 1:
+  + The first cluster are people who are more likely to say no contacted via telephone and have a basic type of education and have a blue-collar kind of job and are married.
+  
+* Cluster 2:
+  + The second cluster are people who are more likely to say yes being contacted by cellular and are educated from a professional course and are technicians.They are also married and young.
+
+* Cluster 3:
+  + The first cluster are people who are almost guaranteed to say say yes, they are university educated and are working on more technical jobs such as managment and adminsitration, they are young and most likely single as well.
+  
+From this clustering analysis, we can see that the clusters aren't very different than the previous ones, young university graduates are still the people who are more likely to say yes.
+    
+
+
+```{r}
+res.hcpcMCA$desc.var$category    # description of each cluster by the categories
+res.hcpcMCA$desc.var$test.chi2   # categorical variables which characterizes the clusters
+```
+
+
+
+## Parangons and class-specific individuals.
+
+```{r}
+res.hcpcMCA$desc.ind$para  # representative individuals of each cluster
+```
+
+What we obtain are the more representative individuals, paragons, for each cluster. We get the rownames of each paragon in every single cluster.
+
+
+```{r}
+res.hcpcMCA$desc.ind$dist  # individuals distant from each cluster
+```
+We get the grpahical representation for the individuals that characterize classes (para and dist).
+```{r}
+# characteristic individuals
+para1<-which(rownames(res.mca$ind$coord)%in%names(res.hcpcMCA$desc.ind$para[[1]]))
+dist1<-which(rownames(res.mca$ind$coord)%in%names(res.hcpcMCA$desc.ind$dist[[1]]))
+para2<-which(rownames(res.mca$ind$coord)%in%names(res.hcpcMCA$desc.ind$para[[2]]))
+dist2<-which(rownames(res.mca$ind$coord)%in%names(res.hcpcMCA$desc.ind$dist[[2]]))
+para3<-which(rownames(res.mca$ind$coord)%in%names(res.hcpcMCA$desc.ind$para[[3]]))
+dist3<-which(rownames(res.mca$ind$coord)%in%names(res.hcpcMCA$desc.ind$dist[[3]]))
+
+plot(res.mca$ind$coord[,1],res.mca$ind$coord[,2],col="grey50",cex=0.5,pch=16)
+points(res.mca$ind$coord[para1,1],res.mca$ind$coord[para1,2],col="blue",cex=1,pch=16)
+points(res.mca$ind$coord[dist1,1],res.mca$ind$coord[dist1,2],col="chartreuse3",cex=1,pch=16)
+points(res.mca$ind$coord[para2,1],res.mca$ind$coord[para2,2],col="blue",cex=1,pch=16)
+points(res.mca$ind$coord[dist2,1],res.mca$ind$coord[dist2,2],col="darkorchid3",cex=1,pch=16)
+points(res.mca$ind$coord[para3,1],res.mca$ind$coord[para3,2],col="blue",cex=1,pch=16)
+points(res.mca$ind$coord[dist3,1],res.mca$ind$coord[dist3,2],col="firebrick3",cex=1,pch=16)
+```
+
+
+## Comparison of clusters obtained after ihierachical clustering (based on PCA) on target duration and binary target.
+
+Given the following description from clusters in MCA: 
+
+* Cluster 1:
+  + The first cluster are people who are more likely to say no contacted via telephone and have a basic type of education and have a blue-collar kind of job and are married.
+  
+* Cluster 2:
+  + The second cluster are people who are more likely to say yes being contacted by cellular and are educated from a professional course and are technicians.They are also married and young.
+
+* Cluster 3:
+  + The first cluster are people who are almost guaranteed to say say yes, they are university educated and are working on more technical jobs such as managment and adminsitration, they are young and most likely single as well.
+
+ and then PCA:
+  
+* Cluster 1:
+  + These are the people who will say yes to the campaign and being contacted by cellulars, and mostly single university graduates. Also, they are being called during the months of april and may, which are nearing summer seasons and these kind of people tend to have money saved.
+* Cluster 2:
+  + The are people who are more likely to say no when they are being contacted on november by cellular, cluster similar to the one in KMEANS. These people are divorced and don't have any housing loan.
+* Cluster 3:
+  + These are people who are married and retired which will most likely say no, and are most usually contacted by telephone. We see that these are people who have their life together already and aren't interested in these kind of campaigns anymore.
+  
+We can comparethe clusters,but we can't say anything about the duration but we can clearly see some trends on the binary target:
+ * In both methods we can see that the people who will say yes are young people, who are highly educated with most of them having university degrees and having good jobs and are contacted by cellular, a clear indication they are young. And the people who say no are tending towards older people who are married and have their life together already, the majority of them being retired and are contacted with a telephone.
+

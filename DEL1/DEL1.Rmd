@@ -1,0 +1,618 @@
+---
+title: "ADEI"
+author: "Fujie Mei Sergio Delgado Mario Wang"
+date: \today
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+  word_document:
+    toc: no
+    toc_depth: '4'
+  html_document:
+    toc: no
+    toc_depth: '4'
+header-includes:
+    - \usepackage{float}
+subtitle: Data Processing, Description, Validation and Profiling
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+The course project is concerned with Multivariant Data Analysis and model building for response variables for recollected data of the outcome of a marketing campaign performed by a bank: Y (Binary Target) and numeric variable Duration (Numeric Target) are the targets
+Aim is to predict how much probability you have to be successful given some socioeconomics characteristics. It involves a binary outcome. As a secondary goal, is to predict the duration of the calls.
+The first part will consist on data prepropcessing(dealing with missings, outliers...), univariate descriptive analysis and profiling.
+
+# Data description
+* Description https://archive.ics.uci.edu/ml/datasets/bank+marketing
+
+## Variables
+* 1 - age (numeric)
+* 2 - job : type of job (categorical: 'admin.','blue-collar','entrepreneur','housemaid','management','retired','self-employed','services','student','technician','unemployed','unknown')
+* 3 - marital : marital status (categorical: 'divorced','married','single','unknown'; note: 'divorced' means divorced or widowed)
+* 4 - education (categorical: 'basic.4y','basic.6y','basic.9y','high.school','illiterate','professional.course','university.degree','unknown')
+* 5 - default: has credit in default? (categorical: 'no','yes','unknown')
+* 6 - housing: has housing loan? (categorical: 'no','yes','unknown')
+* 7 - loan: has personal loan? (categorical: 'no','yes','unknown')
+* 8 - contact: contact communication type (categorical: 'cellular','telephone') 
+* 9 - month: last contact month of year (categorical: 'jan', 'feb', 'mar', ..., 'nov', 'dec')
+* 10 - day_of_week: last contact day of the week (categorical: 'mon','tue','wed','thu','fri')
+* 11 - duration: last contact duration, in seconds (numeric). Important note: this attribute highly affects the output target (e.g., if duration=0 then y='no'). Yet, the duration is not known before a call is performed. Also, after the end of the call y is obviously known. Thus, this input should only be included for benchmark purposes and should be discarded if the intention is to have a realistic predictive model.
+* 12 - campaign: number of contacts performed during this campaign and for this client (numeric, includes last contact)
+* 13 - pdays: number of days that passed by after the client was last contacted from a previous campaign (numeric; 999 means client was not previously contacted)
+* 14 - previous: number of contacts performed before this campaign and for this client (numeric)
+* 15 - poutcome: outcome of the previous marketing campaign (categorical: 'failure','nonexistent','success')
+-social and economic context attributes
+* 16 - emp.var.rate: employment variation rate - quarterly indicator (numeric)
+* 17 - cons.price.idx: consumer price index - monthly indicator (numeric) 
+* 18 - cons.conf.idx: consumer confidence index - monthly indicator (numeric) 
+* 19 - euribor3m: euribor 3 month rate - daily indicator (numeric)
+* 20 - nr.employed: number of employees - quarterly indicator (numeric)
+* 21 - y - has the client subscribed a term deposit? (binary: 'yes','no')
+
+
+
+```{r,include=FALSE,echo=FALSE}
+requiredPackages <- c("FactoMineR","missMDA","VIM","corrplot","chemometrics")
+
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed and loaded
+package.check <- lapply(requiredPackages, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+```
+
+
+
+#Loading the data
+```{r}
+df<-read.csv2("bank-additional.csv")
+head(df)
+```
+
+## Data sampling 5000 individuals and balancing positives and negatives
+```{r}
+set.seed(1)
+n <- 5000
+number_of_trues = as.integer(runif(1, min = 2400, max=2600))
+
+df_yes = df[df$y=="yes",]
+df_yes = df_yes[sample(1:2600), ]
+
+df_no = df[df$y=="no",]
+df_no = df_no[sample(1:2400),]
+df = rbind(df_yes, df_no)
+summary(df)
+```
+
+
+# Useful Functions
+
+```{r}
+#Creates a dataframe of missing per variable
+miss<-function(df) {
+  missing <-c()
+  names<-c()
+  colsnames = colnames(df)
+  for (variable in 1:length(colnames(df))){
+    names<-append(names,colsnames[variable])
+    missing<-append(missing,sum(df[,variable]=="unknown")+sum(is.na(df[,variable])))
+  }
+  df1<-cbind.data.frame(names,missing)
+}
+```
+
+```{r}
+#Calculates mild and extreme outliers
+Outliers<-function(x) {
+  sumlist <- summary(x)
+  iqr <- sumlist[5]-sumlist[2]
+  list(ext_inf_lim = sumlist[2]-3*iqr,ext_sup_lim = sumlist[5]+3*iqr,mild_inf_lim = sumlist[2]-3*iqr,mild_sup_lim = sumlist[5]+3*iqr)
+}
+```
+
+```{r}
+indivOut<-rep(0,5000)
+indivMiss<-rep(0,5000)
+indivErrs<-rep(0,5000)
+```
+
+
+```{r}
+colnames<-colnames(df)
+outliers<-rep(0,21)
+errors<-rep(0,21)
+```
+```{r}
+plots<-function(df,vector,imputed) {
+  if (imputed == TRUE)
+    for (var in vector) {
+      boxplot(df[var],main = paste("After Imputation: ",var),col=4,las=2)
+    }
+  else {
+    for (var in vector) {
+      boxplot(df[var],main = paste("Before Imputation: ",var),col=4,las=2)
+    }
+  }
+}
+plotscat<-function(df,vector,imputed) {
+  if (imputed == TRUE)
+    for (var in vector) {
+      barplot(100*prop.table(table(df[var])),main = paste("After Imputation: ",var),col=4,las=2)
+    }
+  else {
+    for (var in vector) {
+      barplot(100*prop.table(table(df[var])),main = paste("Before Imputation: ",var),col=4,las=2)
+    }
+  }
+}
+```
+
+```{r}
+#Finds in which index is located a variable in the columnames vector
+findIndex<-function(x,colnames) {
+  i<-1
+  while(i < 22) {
+    if (colnames[i] == x) {
+      break
+    }
+    i=i+1
+  }
+  i
+}
+```
+
+```{r}
+missings<-miss(df)
+```
+
+
+
+# Univariate Descriptive Analysis of variables
+
+## Qualitative Variables (Factors) / Categorical
+
+What we will do in this part is to explicitly assign as factors every categorical variable, assign missings as NA's(in case they have) and put it in our vectors for further calculation when needed, finally we will plot it the see each of their proportions and the structure of the graphs.
+
+
+### Job
+
+```{r}
+df$job <- as.factor(df$job)
+miss<-which(df$job=="unknown")
+indivMiss[miss]<-indivMiss[miss]+1
+levels(df$job) <- c("admin.","blue-collar","entrepreneur","housemaid","management","retired","self-employed","services","student","technician","unemployed",NA)
+barplot(100*prop.table(table(df$job)),las=2,col=4)
+summary(df$job)
+```
+
+
+### Marital
+
+```{r}
+df$marital <- as.factor(df$marital)
+miss<-which(df$marital=="unknown")
+indivMiss[miss]<-indivMiss[miss]+1
+levels(df$marital) <- c("divorced","married","single",NA)
+barplot(100*prop.table(table(df$marital)),col=4)
+summary(df$marital)
+```
+
+### Education
+
+```{r}
+df$education <- as.factor(df$education)
+miss<-which(df$education=="unknown")
+indivMiss[miss]<-indivMiss[miss]+1
+levels(df$education) <- c("basic","basic","basic","high.school","illiterate",   "professional.course","university.degree",NA)
+barplot(100*prop.table(table(df$education)),col=4,las=2)
+summary(df$education)
+```
+
+### Default
+
+We only have two levels in here, no and unknown, so this variable is not explicative and won't contribute to anything so it will be deleted.
+```{r}
+df$default <- as.factor(df$default)
+miss<-which(df$default=="unknown")
+indivMiss[miss]<-indivMiss[miss]+1
+barplot(100*prop.table(table(df$default)),col=4,las=2)
+summary(df$default)
+df<-subset(df,select=-default)
+```
+
+### Contact
+
+```{r}
+df$contact <- as.factor(df$contact)
+barplot(100*prop.table(table(df$contact)),col=4)
+summary(df$contact)
+```
+
+
+### Housing
+
+```{r}
+df$housing <- as.factor(df$housing)
+miss<-which(df$housing=="unknown")
+indivMiss[miss]<-indivMiss[miss]+1
+levels(df$housing) <- c("no",NA,"yes")
+barplot(100*prop.table(table(df$housing)),col=4)
+summary(df$housing)
+```
+
+### Loan
+```{r}
+df$loan <- as.factor(df$loan)
+miss<-which(df$loan=="unknown")
+indivMiss[miss]<-indivMiss[miss]+1
+levels(df$loan) <- c("no",NA,"yes")
+barplot(100*prop.table(table(df$loan)),col=4)
+summary(df$loan)
+```
+
+
+### Month
+```{r}
+df$month <- as.factor(df$month)
+barplot(100*prop.table(table(df$month)),col=4)
+summary(df$month)
+```
+
+### Day of the week
+```{r}
+df$day_of_week <- as.factor(df$day_of_week)
+barplot(100*prop.table(table(df$day_of_week)),col=4)
+summary(df$day_of_week)
+```
+
+### Poutcome
+```{r}
+df$poutcome <- as.factor(df$poutcome)
+barplot(table(df$poutcome),col=4)
+summary(df$poutcome)
+```
+
+### y
+
+```{r}
+df$y <- as.factor(df$y)
+barplot(table(df$y),col=4)
+summary(df$y)
+```
+
+## Quantitative Variables / Numerical
+
+What we will do in this part is to explicitly assign as numericals every numerical variable, in this case we don't have any missings but some of the variables have errors and outliers so we will calculate the mild and extreme outliers and put the mild in our vector for further calculations and use the extremes to assign them as NA's for imputations afterwards, we will see the boxplot for a basic understanding of their structures and where are the extreme outliers located.
+
+### Age
+```{r}
+df$age<-as.numeric(df$age)
+boxplot(df$age,col=4) 
+summary(df$age)
+out<-Outliers(df$age)
+abline(h=out$ext_sup_lim,col="red")
+i<-findIndex("age",colnames)
+ext_nulls<-which(df$age>=out$ext_sup_lim)
+mild_nulls<-which(df$age>=out$mild_sup_lim)
+l<-(length(mild_nulls))
+outliers[i]<-l
+indivOut[mild_nulls]<-indivOut[mild_nulls]+1
+df[ext_nulls,"age"]<-NA
+```
+
+
+
+
+
+### Duration
+
+Since duration is a target variable we will not impute it and leave it as it is.
+```{r}
+df$duration<-as.numeric(df$duration)
+boxplot(df$duration,col=4)
+summary(df$duration)
+out<-Outliers(df$duration)
+abline(h=out$ext_sup_lim,col="red")
+i<-findIndex("duration",colnames)
+ext_nulls<-which(df$duration>=out$ext_sup_lim)
+mild_nulls<-which(df$duration>=out$mild_sup_lim)
+l<-(length(mild_nulls))
+outliers[i]<-l
+indivOut[mild_nulls]<-indivOut[mild_nulls]+1
+```
+
+
+### Campaign
+```{r}
+df$campaign<-as.numeric(df$campaign)
+boxplot(df$campaign,col=4)
+out<-Outliers(df$campaign)
+abline(h=out$mild_sup_lim, col = "red")
+summary(df$campaign)
+i<-findIndex("campaign",colnames)
+ext_nulls<-which(df$campaign>=out$ext_sup_lim)
+mild_nulls<-which(df$campaign>=out$mild_sup_lim)
+l<-(length(mild_nulls))
+outliers[i]<-l
+indivOut[mild_nulls]<-indivOut[mild_nulls]+1
+df[ext_nulls,"campaign"]<-NA
+```
+
+
+### Pay days
+```{r}
+df$pdays<-as.numeric(df$pdays,col=4)
+boxplot(df$pdays)
+summary(df$pdays)
+```
+
+### Previous
+
+In this case we have errors and inconsistencies, when pdays = 999 and we have previous>0, it's and impossible case because we have never contacted the client in the previous campaign but it appears in the database that the client had > 0 contacts, which is inconsistent.
+```{r}
+df$previous<-as.numeric(df$previous)
+boxplot(df$previous,col=4)
+summary(df$previous)
+i<-findIndex("pdays",colnames)
+y<-findIndex("previous",colnames)
+l<-which(df$pdays==999 & df$previous>0)
+errors[i]<-length(l)
+errors[y]<-length(l)
+indivErrs[l]<-indivErrs[l]+1
+```
+
+### Employment variation rate
+```{r}
+df$emp.var.rate<-as.numeric(df$emp.var.rate)
+boxplot(df$emp.var.rate,col=4)
+summary(df$emp.var.rate)
+```
+
+### Consumer price index
+```{r}
+df$cons.price.idx<-as.numeric(df$cons.price.idx)
+boxplot(df$cons.price.idx,col=4)
+summary(df$cons.price.idx)
+```
+
+### Consumer confidence index
+```{r}
+df$cons.conf.idx<-as.numeric(df$cons.conf.idx)
+boxplot(df$cons.conf.idx,col=4)
+summary(df$cons.conf.idx)
+```
+
+### Euribor 3 month rate
+```{r}
+df$euribor3m<-as.numeric(df$euribor3m)
+boxplot(df$euribor3m,col=4)
+summary(df$euribor3m)
+```
+
+### Nr.employed
+```{r}
+df$nr.employed<-as.numeric(df$nr.employed)
+boxplot(df$nr.employed,col=4)
+summary(df$nr.employed)
+```
+
+# Imputation
+
+For each imputation we will see that the graphs structure stays almost exactly the same and with summary we see the NA's going away so we can validate the imputations as correct.
+
+## Imputation numerical 
+```{r,fig.align='center'}
+print("Abans d'imputació")
+numerical<-c("age","campaign")
+plots(df,numerical,FALSE)
+summary(df)
+print("Després d'imputació")
+res.input<-imputePCA(df[,numerical],ncp=1)
+df[,numerical]<-res.input$completeObs
+plots(df,numerical,TRUE)
+summary(df)
+```
+
+## Imputation categorical 
+```{r,fig.align='center'}
+print("Abans d'imputació")
+categorical<-c("education","housing","loan","job","marital")
+plotscat(df,categorical,FALSE)
+summary(df)
+print("Després d'imputació")
+res.input<-imputeMCA(df[,categorical],method="EM")
+df[,categorical]<-res.input$completeObs
+plotscat(df,categorical,TRUE)
+summary(df)
+```
+# Discretizatio
+
+## Age discretization
+
+We are going to discretize the age, the first section will be kids from ages 0-10, then teenager from 10-20, afterwards there will be the young adults that goes 20-30 and the adults from 30-50, finally we will have the elderly which will be 60 and above.
+```{r}
+df$Age_group[df$age>=0 & df$age<10]<-"0-10"
+df$Age_group[df$age>=10 & df$age<20]<-"10-20"
+df$Age_group[df$age>=20 & df$age<30]<-"20-30"
+df$Age_group[df$age>=30 & df$age<50]<-"30-50"
+df$Age_group[df$age>=50 & df$age<60]<-"40-60"
+df$Age_group[df$age>=60 & df$age<60]<-">=60"
+df$Age_group<-as.factor(df$Age_group)
+
+head(df)
+```
+
+## Caompaign discretization
+
+We are going to discretize the campaing variable, for people who have been contacted for 0 to 5 times, they are considered contacted Infrequently, from 5 to 10 they are considered frequent and more than that very frequent.
+```{r}
+  df$Campaign_contacts[df$campaign>=0 & df$campaign<5]<-"Infrequent"
+df$Campaign_contacts[df$campaign>=5 & df$campaign<=10]<-"Frequent"
+df$Campaign_contacts[df$campaign>=10]<-"Very frequent"
+
+df$Campaign_contacts<-as.factor(df$Campaign_contacts)
+
+head(df)
+```
+
+# Per variable
+## Number of missing values,outliers and errors 
+### Ranking per variable by missings and errors
+
+```{r}
+miss_errs<-missings$missing+errors
+missings<-cbind.data.frame(missings,miss_errs)
+print(missings[order(missings$miss_errs, decreasing = T), ]   )
+
+```
+
+# Per individual
+
+## Missing
+```{r}
+print(sum(indivMiss))
+```
+## Outlier
+```{r}
+print(sum(indivOut))
+```
+
+## Errors
+```{r}
+print(sum(indivErrs))
+```
+
+
+## Create variable adding the total number missing values, outliers and errors
+
+```{r}
+errVar<-indivMiss+indivOut+indivErrs
+df<-cbind.data.frame(df,errVar)
+head(df)
+```
+
+## Describe these variables, to which other variables exist higher associations.
+
+```{r}
+corrplot(cor(df[,c("age","duration","emp.var.rate","cons.price.idx","cons.conf.idx","euribor3m",
+                "nr.employed","errVar")]),title="Correlation Plot",type="lower")
+```
+* We can see interesting things here:
+* As the consumer confidence decreases, the duration of the call increases and otherwise. Seems coherent as the        confidence is greater, the client will agree or disagree with the caller faster, and if the confidence is lower the client will be more cautious with the conditions and more questions will be asked.
+* The positive and strong correlations between number of employed and employment variation seems ovbious.
+* As the euribor increase, the employment variation also increases since a higher euribor rate implies job losses.
+* Another obvious strong and positive correlation is between IPC and euribor, the higher the the euribor rates the more expensive everthing will be.
+
+## Groups and its means
+We will see 3 differents groups from the education variable and how it changes the mean on wether they are uneducated,educated or highly educated.
+```{r}
+group1<-df[df$education=="illiterate","errVar"]
+mean1<-sum(group1)/length(group1)
+mean1
+group2<-df[df$education=="high.school","errVar"]
+mean2<-sum(group2)/length(group2)
+mean2
+group3<-df[df$education=="university.degree","errVar"]
+mean3<-sum(group3)/length(group3)
+mean3
+cols<-c("illitarate","high.school","university.degree")
+means<-c(mean1,mean2,mean3)
+groups<-cbind.data.frame(cols,means)
+groups
+```
+* We see that for illitarate people, the are consistently inside the common data and no errors or incosistencies occurs, this might indicate as more uneducated someone is, the less power of negotation they have, so it's less prone that in the database might occur something weird.
+
+* There isn't much difference between the educated and highly educated people, they fit the same way in the data structure and few errors or incosistencies occur in them.
+
+
+## Multivarite outliers
+
+We only chose 3 variable because with the others the following error is produced:
+"Warning in covMcd(X) :
+  The 2502-th order statistic of the absolute deviation of variable 3 is zero.
+There are 2640 observations (in the entire dataset of 5000 obs.) lying on the plane with equation
+0 (x_i1-m_1) + 0 (x_i2-m_2) + 1 (x_i3-m_3) = 0 with (m_1,m_2) the mean of these observations.
+Warning in sqrt(mahalanobis(X, X.mcd$center, X.mcd$cov)).
+  NaNs produced", and the execution is halted.
+```{r}
+mout<-Moutlier(df[,c("age","duration","euribor3m")],quantile =0.975, plot = TRUE)
+# Classical: Assumption of normality on the underlying generating mechanism
+# Robust: Median and absolute median deviations -> Not normal generating mechanism
+
+length(which(mout$rd>mout$cutoff))
+ll<-which(mout$rd>mout$cutoff)
+boxplot(mout$rd)
+df$mout <- 0
+df$mout[ ll ]<-1
+df$mout <- factor( df$mout, labels=c( "NoMOut","YesMOut"))
+table(df$mout)
+```
+
+# Profiling
+
+## Duration
+
+```{r}
+i<-findIndex("duration",colnames)
+res.condes<-condes(df,i, proba=0.05)
+```
+
+```{r}
+res.condes$quanti  # Global association to numeric variables
+```
+* We can see that all numerical variables have a relationship with the numerical target feature duration, since all p-values are lesser than 0.05. So we can conclude that all the quantitative variable are being affected by the duration. All the variables show except previous, the greater their value the greater the duration will be, on the other hand, the greater the duration the lower previous value will be.
+```{r}
+res.condes$quali # Global association to factors
+```
+
+```{r}
+res.condes$category
+```
+* Since all p-values are lesser than 0.05, we can conclude that all leves of the categorical variables have and impact on its result, that is, depending on the categorical level of a variable, the duration of a call will be bigger or smaller depending on all the factors, 
+
+## Yes
+
+```{r}
+colnames<-colnames(df)
+i<-findIndex("y",colnames)
+res.catdes<-catdes(df, i , proba = 0.05)
+```
+
+```{r}
+res.catdes$quanti.var  # Global association to numeric variables
+```
+* We see that for all the numerical variables the target y has categorical effect since p-value for all of them are <0.05. So we can conclude that the 
+```{r}
+res.catdes$quanti # Partial association of numeric variables to levels of outcome factor
+```
+* For both responses, yes and no, the means are not equal to the global mean.
+```{r}
+res.catdes$test.chi2 # Global association to factors
+```
+
+```{r}
+res.catdes$category  # Partial association to significative levesls in factors
+```
+
+
+
+
+
+```{r}
+write.csv2(df,file="clean_data.csv")
+```
+
+
+
+
+

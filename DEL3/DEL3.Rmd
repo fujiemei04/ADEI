@@ -1,0 +1,604 @@
+---
+title: "Numeric and Binary targets Forecasting Models"
+author: "Fujie Mei Sergio Delgado Mario Wang"
+date: \today
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+    latex_engine : xelatex
+  word_document:
+    toc: no
+    toc_depth: '4'
+  html_document:
+    toc: no
+    toc_depth: '4'
+header-includes:
+    - \usepackage{float}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,include=FALSE}
+# Load Required Packages: to be increased over the course
+options(contrasts=c("contr.treatment","contr.treatment"))
+
+requiredPackages <- c("effects","FactoMineR","missMDA","mvoutlier","chemometrics", "factoextra","RColorBrewer","ggplot2","dplyr","ggmap","ggthemes","knitr","moments","car","ROCR")
+
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed and loaded
+package.check <- lapply(requiredPackages, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+#verify they are loaded
+search()
+
+```
+
+# Introduction
+
+In today's competitive business landscape, effective marketing campaigns play a crucial role in driving customer engagement and maximizing business outcomes. To optimize campaign performance, it is essential to understand the factors that influence key metrics such as the duration of client calls and the likelihood of a positive response. Predictive modeling techniques, such as linear regression and logistic regression, provide valuable insights into these factors and enable organizations to make data-driven decisions for campaign optimization.
+
+This project aims to analyze a dataset from a marketing campaign and develop predictive models to estimate the duration of client calls and predict whether a client will respond positively or negatively. By leveraging linear regression for call duration prediction and logistic regression for response prediction, we can uncover the underlying patterns and variables that significantly impact these outcomes.
+
+The project workflow begins by constructing initial regression models using various predictor variables. To refine the models, variable selection techniques will be employed, such as assessing variable significance and addressing multicollinearity using Variance Inflation Factor (VIF) analysis. By iteratively evaluating and eliminating variables, we can identify the subset of predictors that contribute most significantly to the target variables.
+
+Once the optimal models are identified, they will be further validated using appropriate evaluation metrics and techniques. The performance of the models will be assessed based on criteria such as model fit, goodness-of-fit measures, and predictive accuracy. Validation helps ensure the robustness and reliability of the chosen models, enhancing their practical utility for real-world marketing campaign scenarios.
+
+The outcomes of this project have the potential to provide valuable insights for marketers, enabling them to optimize campaign strategies, allocate resources effectively, and improve customer engagement. By accurately predicting call duration and client responses, organizations can make informed decisions to enhance campaign effectiveness, drive customer conversions, and ultimately achieve their marketing objectives.
+
+Through this project, we will showcase the power of predictive modeling techniques in marketing analytics and highlight the practical benefits of utilizing linear and logistic regression models for campaign optimization. By combining statistical analysis with real-world marketing data, we aim to contribute to the field of marketing analytics and provide actionable insights for businesses seeking to improve their marketing campaign performance.
+
+# Loading data and deleting columns
+ 
+We will delete the columns we said that won't contained too many errors to be analyzeable.
+```{r}
+df<-read.csv2("clean_data.csv")
+df$X<-NULL
+df$pdays<-NULL
+df$previous<-NULL
+df$errVar<-NULL
+names(df)
+vars_con = c("age","campaign","emp.var.rate","cons.price.idx","cons.conf.idx","euribor3m","nr.employed")
+vars_dis = c("job","marital","education","housing","loan","contact","month","day_of_week","Age_group","Campaign_contacts")
+vars_res= c("y","duration")
+df$y<-factor(df$y)
+head(df)
+```
+
+
+
+# Target variable normality
+Before we begin to start modelling for our linear model with our numerical target, we should consider the normality of this.
+
+## Normality
+```{r}
+hist(df$duration,50,freq=F,col="darkslateblue",border = "darkslateblue")
+mm<-mean(df$duration);ss<-sd(df$duration)
+curve(dnorm(x,mean=mm,sd=ss),col="red",lwd=2,lty=3, add=T)
+shapiro.test(df$duration)
+```
+
+We see that the target total_amount is not normally distributed for the following reasons:
+
+* graph: there is no symmetry in the plot
+* shapiro: we see that the p-value is too large to accept the assumption that target.total_amount is normally distributed
+
+### Symmetry
+```{r}
+skewness(df$duration)
+```
+Normal data should have 0 skewness: we see that our data is left skewed (1.877425).
+
+# Numerical target modelization
+
+## Numerical explicative variables
+```{r}
+(length(vars_con))
+```
+
+
+The first step is deciding the number of explicatives variables . We have many methods including condes, PCA, correlation...if we have a great amount of numerical variables but since it's not our case (we can see that there are only 7) we can use all and decide with the model created which are the best ones to use. We will start using lm to create our model and from there we can discard the ones which are irrelevant, then we use AIC and BIC methods to affirm it.
+
+```{r}
+m1<-lm(duration~.,data=df[,c("duration",vars_con)])
+summary(m1)
+```
+```{r}
+vif_values<-vif(m1)
+#create horizontal bar chart to display each VIF value
+barplot(vif_values, main = "VIF Values", horiz = TRUE, col = "steelblue")
+
+#add vertical line at 5
+abline(v = 5, lwd = 3, lty = 2)
+```
+
+
+In our initial model, we observe that the variable "age" lacks statistical significance. Additionally, a careful examination of the Variance Inflation Factors (VIFs) reveals the presence of exceptionally high values, particularly for the variable "euribor3m." As a result, we will exclude "euribor3m" from subsequent model iterations to assess its impact on model performance.
+
+It is worth noting that the explanatory power of the current model, as measured by the coefficient of determination (R-squared), is relatively low, standing at 30%. This indicates that the model accounts for only a moderate proportion of the total variability in the response variable.
+
+Moving forward, VIFs above a threshold value of 5 will be regarded as high, aligning with the guidelines provided by the R VIF function documentation. This threshold helps identify potential issues of multicollinearity among the predictor variables, thereby aiding in the selection of more reliable and robust models.
+
+```{r}
+m2<-lm(duration~age+campaign+emp.var.rate+cons.price.idx+cons.conf.idx+nr.employed,data=df[,c("duration",vars_con)])
+summary(m2)
+```
+
+
+```{r}
+vif_values<-vif(m2)
+#create horizontal bar chart to display each VIF value
+barplot(vif_values, main = "VIF Values", horiz = TRUE, col = "steelblue")
+
+#add vertical line at 5
+abline(v = 5, lwd = 3, lty = 2)
+```
+After further analysis, we have decided to remove the variable "emp.var.rate" from our model. The decision was based on the observation that this variable exhibits a high Variance Inflation Factor (VIF). VIF is a measure of multicollinearity, and a high VIF indicates a strong correlation between the variable and other predictors in the model.
+
+By removing "emp.var.rate," we aim to mitigate the issue of multicollinearity and improve the stability and interpretability of our model. Multicollinearity can lead to unreliable coefficient estimates and difficulties in interpreting the individual effects of correlated predictors.
+
+
+```{r}
+m3<-lm(duration~age+campaign+cons.price.idx+cons.conf.idx+nr.employed,data=df[,c("duration",vars_con)])
+summary(m3)
+```
+```{r}
+vif_values<-vif(m3)
+#create horizontal bar chart to display each VIF value
+barplot(vif_values, main = "VIF Values", horiz = TRUE, col = "steelblue")
+
+#add vertical line at 5
+abline(v = 5, lwd = 3, lty = 2)
+```
+
+Upon further analysis, it becomes evident that by removing the variable "emp.var.rate" from our model, all remaining predictor variables exhibit statistical significance, as indicated by their p-values being less than 0.05. However, it is worth noting that the variable "age" still fails to attain significance. As a result, we will proceed to eliminate "age" from our model.
+
+Additionally, to address concerns of multicollinearity, we observe that all Variance Inflation Factors (VIFs) are below the threshold of 5. This suggests that the predictor variables do not suffer from substantial intercorrelation issues.
+
+Therefore, our subsequent step involves assessing the performance of an alternative model, which excludes the variable "age." By evaluating this model, we aim to determine the impact of removing "age" on the overall model performance and effectiveness.
+```{r}
+m4<-lm(duration~campaign+cons.price.idx+cons.conf.idx+nr.employed,data=df[,c("duration",vars_con)])
+summary(m4)
+```
+
+In this case, we can see that all of our variables are statistically significant and the vif's values fall into acceptable range so we will decide to use all the variables of these model even though the R2 isn't the highest. 
+```{r}
+vif_values<-vif(m4)
+#create horizontal bar chart to display each VIF value
+barplot(vif_values, main = "VIF Values", horiz = TRUE, col = "steelblue")
+
+#add vertical line at 5
+abline(v = 5, lwd = 3, lty = 2)
+```
+
+
+```{r}
+par(mfrow=c(2,2))
+plot(m4)
+```
+
+To examine the normality assumption of our data, we have conducted an analysis and found that it is not met. In order to address this issue, we propose using the Box-Cox transformation, which allows us to determine the optimal power transformation to achieve normality. By applying the Box-Cox function to our target variable, "duration," we have obtained an estimated lambda (α) value that is close to 0.
+
+Based on this finding, we will proceed with a log-transformation of the "duration" variable in conjunction with our predictor variables (regressors). This transformation aims to normalize the distribution of the "duration" variable and improve the suitability of our data for linear regression modeling.
+
+
+
+
+```{r}
+library(MASS)
+boxcox(duration~campaign+cons.price.idx+cons.conf.idx+nr.employed ,data=df[,c("duration",vars_con)])
+
+```
+
+```{r}
+m5 <-
+lm(log(duration)~campaign+cons.price.idx+cons.conf.idx+nr.employed,df[,c("duration",vars_con)]);
+summary(m5)
+```
+```{r}
+vif_values<-vif(m5)
+#create horizontal bar chart to display each VIF value
+barplot(vif_values, main = "VIF Values", horiz = TRUE, col = "steelblue")
+
+#add vertical line at 5
+abline(v = 5, lwd = 3, lty = 2)
+```
+We can see that the quality stays the same, even R2 went up and the vifs are in acceptable ranges, we want to check the normality now to see if it has improved.
+
+```{r}
+par(mfrow=c(2,2))
+plot(m5)
+```
+As we can see, the dot's follow the normality line so we can assume that it complies with this assumption.
+
+So far we have seen 5 models, the first one with all the numerical variables included, the second one with numerical variables excluded from using VIF, the third one we also excluded another variable using VIF, the fourth one we withdraw age because it was not significant and the vif values were ok and finally the 5th model normalizing our target variable. Now we are going to compare them:
+
+* Model 1
+  + Coefficient of determination = 30.23%
+  + > 5 VIFs: 5/7
+    
+* Model 2
+  + Coefficient of determination = 24.27%
+  + > 5 VIFs: 4/6
+    
+* Model 3
+  + Coefficient of determination = 23.33%
+  + > VIFs: 0/5 
+* Model 4
+  + Coefficient of determination = 23.28%
+  + > 5 VIFs: 0/4
+    
+* Model 5
+  + Coefficient of determination = 26.27%
+  + > VIFs: 0/4
+  
+  We can see that models 1 and 5 have the highest R2 value and between those two the best one is model5 because none of its variables have high vif, models 2,3 and 4 have similar R2 values and their VIF's are comparable but it can't be the model 5 so it's the one we will keep for now.
+  
+
+  
+
+## Modelization with factors
+
+We will first make a condes to see which categorical variables are the most influential with respect to our target duration to see which ones we will choose for our model.
+```{r}
+condes(df[,c("duration",vars_dis)],1,proba=0.05)
+```
+
+Upon examining the statistical significance of the categorical variables, we have determined that the factors with the smallest p-values are "contact" and "month." Therefore, for the sake of simplicity, we will proceed with these variables for our modeling purposes.
+
+However, considering that the variable "month" consists of numerous levels, we acknowledge the potential complexities it may introduce to the modeling process. To facilitate a more manageable and streamlined analysis, we will undertake a regrouping or re-categorization of the "month" variable. This regrouping will involve combining certain levels to create broader categories that retain meaningful information while reducing the overall number of levels.
+
+```{r}
+# Months to groups
+df$f.influentMonth <- 3
+# 1 level - mar-may
+aux<-which(df$month %in% c("apr","jun","aug"))
+df$f.influentMonth[aux] <-1
+# 2 level - jun-ago
+aux<-which(df$month %in% c("sep","may","jul"))
+df$f.influentMonth[aux] <-2
+# 3 level - aug-feb
+aux<-which(df$month %in% c("mar","dec","oct","nov"))
+df$f.influentMonth[aux] <-3
+df$f.influentMonth<-factor(df$f.influentMonth,levels=1:3,labels=c("apr-ju
+n-aug","sep-may-jul","mar-dec-oct-nov"))
+levels(df$f.influentMonth)<-paste0("f.influentMonth.",levels(df$f.influentMonth)) # Hacemos las etiquetas m?s informativas
+summary(df$f.influentMonth)
+```
+
+Since we have campaign as both categorical and numerical factors, we will model with both  of them with
+our new categorical variables to see which is better to use, the numerical or the categorical one using AIC criteria because our model isn't too complex.
+We can see that AIC is smaller in m6, with numerical campaign, so is the go-to model for us.
+
+```{r}
+m6<-lm(log(duration)~campaign+cons.price.idx+cons.conf.idx+nr.employed+contact+f.influentMonth,data=df)
+m7<-lm(log(duration)~Campaign_contacts+contact+cons.price.idx+cons.conf.idx+f.influentMonth+contact,data=df)
+AIC(m6,m7)
+```
+
+
+
+```{r}
+summary(m6)
+```
+We see that campaign have a p-value>0.05 will drop them and our final variables will be the ones left.
+
+```{r}
+m7<-lm(log(duration)~cons.price.idx+cons.conf.idx+nr.employed+contact+f.influentMonth,data=df)
+summary(m7)
+```
+```{r}
+vif(m7)
+```
+We can see that after dropping campaign all the variables remaining are significant and the vif values falls into the acceptable range so we will use this model.
+
+## Interacctions
+```{r}
+m8<-lm(log(duration)~(cons.price.idx+cons.conf.idx+nr.employed+contact+f.influentMonth)^2,data=df)
+anova(m8)
+```
+
+To do the interactions we will choose cons.priceidx-influent-month as factor-covariate interaction and contact-nr.employed as 2-factor interaction.
+
+```{r}
+m9<-lm(log(duration)~cons.price.idx*f.influentMonth+cons.conf.idx+nr.employed+contact*nr.employed,data=df)
+summary(m9)
+```
+```{r}
+m10<-lm(log(duration)~campaign+contact*f.influentMonth+nr.employed,data=df)
+m11<-lm(log(duration)~campaign*f.influentMonth+contact+nr.employed,data=df)
+```
+```{r}
+AIC(m9,m10)
+```
+```{r}
+AIC(m9,m11)
+```
+```{r}
+AIC(m10,m11)
+```
+```{r}
+vif(m9,type="predictor")
+```
+We want to compare all the interactions, including them all in a single model or one interaction at a time and from the AIC criteria the best one seems to be the model 9, having the the two interactions at the same time, because it has the lowest AIC value. So we think that this is the best model so far in our modelling process and we will proceed to validate it.
+
+## Validation
+
+After selecting the best model, Model 9, which incorporates both numerical and categorical factors along with their interactions, we will now proceed with the crucial step of model validation. Model validation aims to assess the performance and reliability of the chosen model on unseen data, ensuring its generalizability and usefulness in real-world scenarios.
+
+```{r}
+par(mfrow=c(2,2))
+plot(m9)
+par(mfrow=c(1,1))
+```
+We want to verify that our models complies with the linear regressions assumptions, we will cover all four of them seeing the graph above:
+
+* Normality: Normality: From the Residual vs Fitted graph, we observe that the data points closely follow a straight line with minor deviations. This indicates that the residuals are approximately normally distributed. Hence, we can reasonably assume that our model satisfies the normality assumption.
+
+* Linearity: In the Residual vs Fitted graph, the red line representing the model's fitted values aligns closely with the dotted line. This suggests that the relationship between the predictors and the response variable is adequately captured by a linear relationship. Thus, we can conclude that our model meets the linearity assumption.
+
+* Homoscedasticity: Analyzing the Scale-Location graph, we observe that the residuals do not exhibit any discernible pattern, such as a cone-shaped or fan-shaped dispersion. This lack of a clear pattern indicates that the variability of the residuals is consistent across different levels of the predictor variables. As a result, we can assume that our model fulfills the homoscedasticity assumption.
+
+* Independence: In the Residual vs Fitted graph, the scattered points appear to be randomly distributed across the plot without displaying any noticeable pattern or trend. This randomness suggests that the residuals are not systematically related to each other, supporting the assumption of independence. Therefore, we can infer that our model satisfies the independence assumption.
+
+All in all, we can see that our model is valid because it complies with all the four assumptions of a linear regression model.
+
+##  Lack of fit observations and influence data
+
+Now we will discuss the lack of fit observations and influence data .
+```{r}
+par(mfrow=c(1,1))
+influencePlot(m11)
+```
+
+
+```{r}
+Boxplot(cooks.distance(m11))
+```
+Based on the influential plot and Cook's distance, we have identified three individuals in the dataset who exert a significant influence on the model. The influential plot provides a visual representation of the influence of each observation on the model's fit, while Cook's distance quantifies the impact of each observation on the overall model performance.
+
+To ensure the robustness and reliability of our model, we have decided to remove these three influential individuals from the dataset. By excluding these observations, we aim to mitigate their disproportionate influence, which could potentially affect the model's coefficients and predictions.
+
+```{r}
+which(row.names(df)==1512)
+which(row.names(df)==1508)
+which(row.names(df)==3582)
+```
+
+```{r}
+m12<-lm(log(duration)~cons.price.idx*f.influentMonth+cons.conf.idx+nr.employed+contact*nr.employed,data=df[,c(-1512,-1508,-3582)])
+Boxplot(cooks.distance(m12))
+```
+```{r}
+summary(m12)
+```
+
+Deleting the influential individuals we improved the R2 up to 33.98%.
+
+In conclusion, our modeling process began by considering all numerical variables and subsequently selecting the most significant ones. We then proceeded to analyze the categorical variables, identifying the most influential factors. By incorporating interactions between variables, we constructed our best model, which achieved an R-squared value of approximately 34%.
+
+Throughout this process, we ensured that the selected variables exhibited acceptable Variance Inflation Factors (VIFs), indicating minimal multicollinearity. Moreover, we carefully assessed the model's adherence to the assumptions of linear regression and found that it complied with all of them, including normality, linearity, homoscedasticity, and independence.
+
+This final model represents a significant improvement in explaining the variability in the target variable compared to the initial model. With an R-squared of nearly 34%, it suggests that approximately 34% of the variation in the response variable can be attributed to the selected predictors.
+
+Overall, our comprehensive modeling approach, which involved systematic variable selection, incorporation of interactions, and rigorous assessment of model assumptions, has resulted in a robust and interpretable model. This model provides valuable insights into the relationships between the predictors and the target variable, enabling us to make more accurate predictions and informed decisions in the context of the marketing campaign dataset.
+
+# Binary target modelization
+
+We start by splitting our sample in a training sample and a testing sample, for accomplishing this we randomly select 25% of the sample to create the testing set and the rest for the training.
+
+```{r}
+set.seed(19101990)
+sam <-sample(1:nrow(df),0.75*nrow(df))
+dfw<-df[sam,]
+dft<-df[-sam,]
+```
+
+
+## Modelling with numerical variables
+
+
+To begin our modeling process, we initially focus on the numerical variables within the dataset. Conducting a comprehensive analysis, we aim to identify the most significant variables that have a substantial impact on the target variable.
+
+To achieve this, we perform a condes  analysis. This analysis involves examining the relationships between each numerical predictor variable and the target variable. By calculating various statistical measures such as correlation coefficients, p-values from hypothesis tests, and effect sizes, we gain insights into the strength and significance of these associations.
+
+Following the condes analysis, we will select the most significant numerical variables based on their statistical importance and relevance to our research objectives. These selected variables will serve as the foundation for further modeling steps, including feature engineering, model building, and assessment of model performance.
+
+```{r}
+catdes(dfw[,c("y",vars_con,"duration")],1)
+```
+
+
+We can see that all variables have p-values < 0.05 so we will choose all of them.
+```{r}
+gm1<-glm(y ~
+duration +
+nr.employed +
+euribor3m +
+emp.var.rate +
+campaign +
+age+
+cons.price.idx+
+cons.conf.idx
+, family = binomial, data = dfw[,c("y",vars_con,"duration")])
+summary(gm1)
+```
+
+Based on the summary of our analysis, we have determined that out of the numerical variables, only "duration" and "euribor3m" demonstrate statistical significance in relation to our target variable. As a result, we will proceed with including only these two variables in our modeling process.
+
+By selecting "duration" and "euribor3m" as our predictors, we aim to build a simplified yet effective model that focuses on the most influential numerical factors in predicting the target variable. This streamlined approach not only reduces the complexity of the model but also ensures that we concentrate our efforts on the variables that have the greatest impact on the outcome of interest.
+
+
+```{r}
+gm2<-glm(y ~
+duration +
+euribor3m 
+, family = binomial, data = dfw[,c("y",vars_con,"duration")])
+summary(gm2)
+```
+
+```{r}
+vif(gm2)
+```
+We see that from summary, after only keeping those variables they are still significant, the residual variance is significatly lower than the null deviance and the vif's are equal to one so it seems like a good model so far.
+
+## Including factors
+
+As we did with the numerical variables, now we will do the same for the factors using catdes, and we can see that all of them have relation to the target so we will use them all and discard from there.
+```{r}
+catdes(dfw[,c("y",vars_dis)],1)
+```
+
+```{r}
+gm3<-glm(y ~
+duration +
+euribor3m+
+contact+
+f.influentMonth+
+marital+
+education+
+job+
+day_of_week+
+housing+
+Age_group
+,family = binomial, data = dfw)
+Anova(gm3)
+```
+
+
+From the anova we see that only contact and month are the signifcant variables so we will only keep those.
+
+```{r}
+gm4<-glm(y ~
+duration +
+euribor3m+
+contact+
+f.influentMonth
+, family = binomial, data = dfw)
+Anova(gm4)
+```
+```{r}
+vif(gm4)
+```
+From the anova we can see that this model all the variables are significant and all the vif values are in acceptable ranges so it seems like a good model so far.
+
+## Interactions
+Now we are going to see the interactions of our model, we will see all the interactions and choose factor-factor and covariate-factor for further modelling.
+
+```{r}
+gm5<-glm(y ~
+(duration +
+euribor3m+
+contact+
+f.influentMonth)^2
+, family = binomial, data = dfw)
+Anova(gm4)
+```
+
+We can see that the interactions have very big values from factor-factor and covariate factor, but there isn't anything which can be done from previous models because the stats proved us the they were the most significant values and dont have collinearity, so we will proceed to choose two interaction either way to see how they perform. We will choose duration:contact and  euribor3m:f.influentMonth.
+
+```{r}
+gm6<-glm(y ~
+duration*contact +
+euribor3m*f.influentMonth
+, family = binomial, data = dfw)
+Anova(gm6)
+```
+```{r}
+gm7<-glm(y ~
+duration*contact +
+euribor3m+f.influentMonth
+, family = binomial, data = dfw)
+gm8<-glm(y ~
+duration+contact +
+euribor3m*f.influentMonth
+, family = binomial, data = dfw)
+AIC(gm6,gm7)
+```
+```{r}
+AIC(gm6,gm8)
+```
+```{r}
+AIC(gm7,gm8)
+```
+```{r}
+Anova(gm7)
+```
+```{r}
+vif(gm7)
+```
+
+We can see that this model is unacceptable because the vif's are very high in 2 of the 5 variables. We tried the same thing for the other interactions model but the result is the same. So our best model so far is gm4 which includes 2 factors and 2 numerical variables without interactions
+
+## Validation
+
+Now we will proceed to validate the best model we got, GM4.
+```{r}
+residualPlots(gm4)
+```
+We can see from residual plots that there aren't really any influential individual apart from one in whichh we will check it with the influence plot.
+
+```{r}
+influencePlot(gm3)
+```
+We can see two major individuals who influences quite a lot, 4580 and 4779 so we will delete them for our model.
+
+```{r}
+gm4<-glm(y ~
+duration +
+euribor3m+
+contact+
+f.influentMonth
+, family = binomial, data = dfw[c(-4580,-4779),])
+summary(gm4)
+```
+```{r}
+Anova(gm4)
+```
+
+We can see from anova that the regressors are significant and the residual deviance is way lower compared to the null deviance so the model seems valid.
+
+```{r}
+dataroc<-prediction(predict(gm5, type="response"),dfw$y)
+par(mfrow=c(1,2))
+plot(performance(dataroc,"err"))
+plot(performance(dataroc,"tpr","fpr"))
+abline(0,1,lty=2)
+```
+From the ROC curves we can see that ours falls into excellent category from the slides we've seen in class.But in the other graph we see something strange happening when cutoff=1, but apart from that seems quite good as well.
+
+```{r}
+fittedSamplesTest=predict(gm5, newdata=dft, type="response")
+fittedTest=ifelse(fittedSamplesTest<0.5,"No","Yes" )
+ConfMatTest=table(dft$y,fittedTest)
+ConfMatTest
+accuracy = (ConfMatTest[1,1]+ConfMatTest[2,2])/sum(ConfMatTest)
+error_rate = (ConfMatTest[1,2] + ConfMatTest[2,1])/sum(ConfMatTest)
+sensibilty = ConfMatTest[2,2]/(ConfMatTest[2,2]+ ConfMatTest[2,1])
+specificity = ConfMatTest[1,1]/(ConfMatTest[1,1]+ ConfMatTest[1,2])
+```
+```{r}
+accuracy*100
+error_rate*100
+sensibilty*100
+specificity*100
+```
+
+We have an accuracy of 96.8%. We have a recall of 95.3% which means that the positive results of this confusion
+table is very accurate. We can see that we have 571 + 13 positive observations, from which 571 of them have been
+correctly classified. Now, we are going to do the same, but for the negative results (specificity). We can see that only
+a 97.77% of specificity, which is an ecellent result. 639 of the 27 + 639 negative observations have been classified as
+negative so it's very precise. To conclude, we see that the error rate is only of 3.2% which is amazing.
+
+In conlusion, the results suggest that the model exhibits a remarkable level of accuracy and precision in both positive and negative predictions. With a high accuracy rate, strong recall for positive instances, and excellent specificity for negative instances, the model demonstrates its effectiveness in correctly classifying observations.
+
+It is important to note that these performance metrics should be interpreted in the context of the specific problem and dataset being analyzed. However, based on the provided information, the model's performance appears to be impressive, with a low error rate indicating its reliability and efficacy.
+
